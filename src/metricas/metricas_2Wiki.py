@@ -58,13 +58,16 @@ def respuesta_en_nodos_encontrados(nodos, ground_truth):
     return normalized_ground_truth in nodos_lista
 
 
-def suporting_facts_en_subgrafo(nodos, sup_facts):
+def suporting_facts_en_subgrafo(nodos, sup_facts, new = None):
     """
     Comprobar cuantos de los supporting facts estan en la entidades
     del subgrafo recuperado.
     Devuelve Nº de sup_facts y nº de entidades igual a sup_facts
     """
-    nodos_lista = [normalize_answer(node['name']) for entidad in nodos for node in nodos[entidad]]
+    if new == 1:
+        nodos_lista = [normalize_answer(node) for node in nodos]
+    else:
+        nodos_lista = [normalize_answer(node['name']) for entidad in nodos for node in nodos[entidad]]
     sup_facts_lista = [normalize_answer(sf[0]) for sf in eval(sup_facts)]
     comunes = Counter(nodos_lista) & Counter(sup_facts_lista)
     return len(sup_facts_lista), len(comunes)

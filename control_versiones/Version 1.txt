@@ -1,0 +1,30 @@
+Construccion grafo:
+	- Tripletas sacadas de evidences de 2Wiki
+	- Creacion de vectoIndex con embeddings
+	- Creacion de fulltextIndex
+
+Construccion RAG:
+	- Carga en Qdrant de las frases por separado de 2Wiki
+	- Creacion de embeddings.
+
+Graph retrieval:
+	- Extraccion entidades ner de la pregunta con spacy - añadiendo condicion de que busque cuando la primera letra sea mayuscula.
+	- Busqueda exacta de entidades ner
+	- Busqueda parcial de entidades ner (fulltextIndex)
+	- Busqueda fuzzy de entidades ner (fulltextIndex)
+	- Filtrado parciales y fuzzy (score = 2) -> Se dejan las 3 mas comunes entre las 2 busquedas
+	- Busqueda por embedding --> Filtrado de las 3 con mejor score
+	- Busqueda en neo de las entidades (exactas + embeddings filtradas + ner filtradas)
+	- Extraccion subgrafo con 2 saltos
+	- Formateo de tripletas a string: enti1 -> rel1 -> enti2 -> rel2 -> enti3
+	- Reranking de las tripletas y filtrado por score.
+	- Envio al LLM con instrucciones para buscar solo ahi.
+
+RAG:
+	- Busqueda por embeddings
+	- Reranking - filtrado por score
+	- Envio al LLM con instrucciones para buscar solo ahi.
+
+HIBRIDO:
+	- Union de mejores tripletas y mejores textos del RAG
+	- Envio al LLM con instrucciones para buscar solo ahi.

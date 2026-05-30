@@ -68,7 +68,66 @@ class ConexionNeo4j:
         return result[0]
     
     
+
+    def busqueda_exacta_entidades(self, entidades):
+        
+        query = """
+            MATCH (n:Entity)
+            WHERE n.name IN $entis
+            RETURN n.name
+        """
+        records, summary, keys = self.driver.execute_query(query, entis = entidades)
+        entis_exactas = [record["n.name"] for record in records]
+        return entis_exactas
+
+
+
+
+    def busqueda_parcial_entidades(self, index_name, entidades):
+        
+        res_busqueda_parcial = {}
+        for ent in entidades:
+            query = """
+                CALL db.index.fulltext.queryNodes($index_name, $entidad) 
+                YIELD node, score
+                RETURN node.name, score
+            """
+            records, summary, keys = self.driver.execute_query(query, index_name = index_name, entidad = ent)
+            resultado = [{"name": record['node.name'], "score": record['score']} for record in records]
+            res_busqueda_parcial[ent] = resultado
+        return res_busqueda_parcial
+
+
+
+
+
+    def busqueda_fuzzy_entidades(self, index_name, entidades):
+        
+        res_busqueda_fuzzy = {}
+        for ent in entidades:
+            # ent_fuzzy = f"{ent}~"
+            ent_fuzzy = ent + "~"
+            query = """
+                CALL db.index.fulltext.queryNodes($index_name, $entidad) 
+                YIELD node, score
+                RETURN node.name, score
+            """
+            records, summary, keys = self.driver.execute_query(query, index_name = index_name, entidad = ent_fuzzy)
+            # res_busqueda_fuzzy[ent] = records
+            resultado = [{"name": record['node.name'], "score": record['score']} for record in records]
+            res_busqueda_fuzzy[ent] = resultado
+        return res_busqueda_fuzzy
+
+
+
+
+    
     def extraer_subgrafo(self, entidades, n_saltos):
+        """
+        Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
+        SOLO tripletas (2 entidades-1relacion)
+        """
+        
         query_base = """
             MATCH (n:Entity)
             WHERE n.name IN $entidades
@@ -96,3 +155,77 @@ class ConexionNeo4j:
             rels[f"relaciones_entidad_{entidades[i]}"] = node['relationships']
 
         return nodes, rels
+
+
+    def extraer_subgrafo_completo(self, entidades, n_saltos):
+        """
+        Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
+        TODOS los saltos - caminos completos DESDE entidad origen
+        """
+        query_base = f"""
+            MATCH path = (n:Entity)-[*1..{n_saltos}]-(m)
+            WHERE n.name IN $entis
+            RETURN
+                elementId(n) AS ID,
+                n.name AS entidad_inicial,
+                [node IN nodes(path) | node.name] AS nodos_names,
+                [rel IN relationships(path) | type(rel)] AS relaciones_types
+            """
+
+        subgrafo_raw, summary, key = self.driver.execute_query(query_base, entis = entidades)
+        lista_relaciones = []
+        for rec in subgrafo_raw:
+            relacion = [rec["entidad_inicial"]]
+            for rel, node in zip(rec["relaciones_types"], rec["nodos_names"][1:]):
+                relacion.append(rel)
+                relacion.append(node)
+            lista_relaciones.append(relacion)
+
+        return lista_relaciones
+
+
+
+
+    def añadir_embeddings_como_propiedad_neo4j(self, entidades, embed_model):
+
+        entidades_embeddings = embed_model.encode(entidades)
+        # Lista de diccionarios para Neo4j
+        entis_embeddings_list = [{'name': k, "embedding":v } for k,v in zip(entidades, entidades_embeddings.tolist())]
+        query_embeddings = """
+            UNWIND $data AS row
+            MATCH(n:Entity {name: row.name})
+            SET n.embedding = row.embedding
+        """
+        sumary = self.driver.execute_query(query_embeddings, data = entis_embeddings_list)
+        return sumary
+    
+    
+    def crear_vector_index_neo4j(self, vector_index_name, n_vector, similarity_function):
+    
+        query_crear_embeddings = """
+            CREATE VECTOR INDEX $vector_index_name IF NOT EXISTS
+            FOR (n:Entity)
+            ON (n.embedding)
+            OPTIONS {
+            indexConfig: {
+                `vector.dimensions`: $n_vector,
+                `vector.similarity_function`: $similarity_function
+                }
+            }
+        """
+        sumary = self.driver.execute_query(
+            query_crear_embeddings,
+            vector_index_name = vector_index_name,
+            n_vector = n_vector,
+            similarity_function = similarity_function)
+        return sumary
+    
+
+
+    def crear_fulltext_index(self, index_name):
+        
+        query = """
+            CREATE FULLTEXT INDEX $index_name FOR (n:Entity) ON EACH [n.name]
+        """
+        summary = self.driver.execute_query(query, index_name = index_name)
+        return summary

@@ -1,8 +1,7 @@
 import sys
 from pathlib import Path
 
-from sentence_transformers import SentenceTransformer
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from sentence_transformers import SentenceTransformer, CrossEncoder
 
 current_file = Path(__file__).resolve()
 root_dir = current_file.parent.parent
@@ -13,14 +12,15 @@ from src.conexion_Neo4j.conexion_Neo4j import ConexionNeo4j
 from src.graph_retrieval.funciones_graph_retrieval import (
     extraer_top_k_entities,
     formatear_tripletas,
+    filtrado_parcial,
+    filtrado_fuzzy,
+    combinar_entis_parcial_fuzzy,
+    union_entidades,
+    formatear_tripletas_extendidas,
+    reranking_tripletas,
+    filtrar_tripletas_reranked
 )
-from src.conexion_qdrant.conexion_qdrant import ConexionQdrant
-from src.RAG_retrieval.funciones_RAG_retrieval import(
-    extraer_info_nodes,
-    extraer_info_points,
-    filtrar_nodos_por_score,
-    textos_para_prompt
-)
+from src.funciones_retrieval_generales import extraer_entidades_ner
 from src.funciones_generales import build_prompt
 from src.LLM_interaction import LLM_interaction_functions as llm_funcs
 from src.metricas.metricas_2Wiki import (
@@ -35,18 +35,18 @@ from src.output_save.funciones_guardado import guardar_resultados, guardar_regis
 
 
 
-
-def contestar_2Wiki_con_hibrido(n_registros, database_Neo, vector_index_name, embed_model_st, collection, embed_model_llama, llm_name, prompt_base, opciones_llm):
+def contestar_2Wiki_con_grafo(n_registros, database_Neo, vector_index_name, embed_model_st, llm_name, prompt_base, opciones_llm):
     """ 
 
     """
     
     database_Neo4j = ConexionNeo4j(database_Neo)
-    qd_client = ConexionQdrant()
     
     resultados = {}
 
     dataset_2Wiki = load_filter_dataset_HuggingFace("xanhho/2wikimultihopqa", n_registros, "train")
+
+    reranker = CrossEncoder("BAAI/bge-reranker-base", max_length=512)
 
     for idx, registro in enumerate(dataset_2Wiki):
         
@@ -54,65 +54,70 @@ def contestar_2Wiki_con_hibrido(n_registros, database_Neo, vector_index_name, em
 
         question = dataset_2Wiki[idx]['question']
         id_reg = dataset_2Wiki[idx]['_id']
+
+        """entidades_encontradas = database_Neo4j.query_a_embedding(vector_index_name, embed_model_st, question, 5)
+        entidades_filtradas = extraer_top_k_entities(entidades_encontradas, 2)"""
         
-        #------------ GRAPH RETRIEVAL ----------------
-        entidades_encontradas = database_Neo4j.query_a_embedding(vector_index_name, embed_model_st, question, 5)
-        entidades_filtradas = extraer_top_k_entities(entidades_encontradas, 2)
-        nodos, relaciones = database_Neo4j.extraer_subgrafo(entidades_filtradas, 2)
-        tripletas_formateadas = formatear_tripletas(relaciones)
-        
-        
-        #------------ RAG RETRIEVAL ----------------
-        # nodes = qd_client.retriever_quadrant_llama(collection, embed_model_llama, question)
-        # nodes_clean = extraer_info_nodes(nodes)
-        # DIRECTO A QDRANT
-        points = qd_client.query_qdrant(collection, embed_model_st, question, 5)
-        points_clean = extraer_info_points(points)
-        
-        # nodes_filt = filtrar_nodos_por_score(nodes_clean)
-        points_filt = filtrar_nodos_por_score(points_clean)
-        
-        # textos_retrieval = textos_para_prompt(nodes_filt)
-        textos_retrieval = textos_para_prompt(points_filt)
-        
-        # lista_nodos_RAG = [{"id": k, "text":v["text"], "score":v["score"]} for k,v in  nodes_filt.items()]  # PAra aguardar en resultados
-        lista_nodos_RAG = [{"id": k, "text":v["text"], "score":v["score"]} for k,v in  points_filt.items()]  # PAra aguardar en resultados
+        ner_model = "en_core_web_sm"
+        entidades_ner = extraer_entidades_ner(question, ner_model)
+        entis_exactas = database_Neo4j.busqueda_exacta_entidades(entidades_ner)
+        fulltext_index_name = "entidadesIndex"
+        res_busqueda_parcial = database_Neo4j.busqueda_parcial_entidades(fulltext_index_name, entidades_ner)
+        res_busqueda_fuzzy = database_Neo4j.busqueda_fuzzy_entidades(fulltext_index_name, entidades_ner)
         
         
-        #------------ COMBINACION Y RESPUESTA ----------------
+        min_score_parcial = 2
+        filt_busqueda_parcial = filtrado_parcial(res_busqueda_parcial, min_score_parcial)
+        min_score_fuzzy = 2
+        filt_busqueda_fuzzy = filtrado_fuzzy(res_busqueda_fuzzy, min_score_fuzzy)
+        n_final = 3
+        entidades_text_index = combinar_entis_parcial_fuzzy(filt_busqueda_parcial, filt_busqueda_fuzzy, n_final)
+        
+        
+        n_resultados_embedding = 3
+        res_busqueda_embeddings = database_Neo4j.query_a_embedding(vector_index_name, embed_model_st, question, n_resultados_embedding)
+        entidades_embeddings = extraer_top_k_entities(res_busqueda_embeddings, 2)
+        
+        
+        entidades_finales = union_entidades(entis_exactas, entidades_text_index, entidades_embeddings)
+
+        
+        n_saltos = 2
+        subgrafo = database_Neo4j.extraer_subgrafo_completo(entidades_finales, n_saltos)
+        tripletas_formateadas = formatear_tripletas_extendidas(subgrafo)
+        # tripletas_reranked = reranking_tripletas(question, tripletas_formateadas)
+        tripletas_reranked = reranking_tripletas(question, tripletas_formateadas, reranker)
+        tripletas_finales = filtrar_tripletas_reranked(tripletas_reranked)
+        
+        
+        
         info_prompt = {}
-        info_prompt['tripletas_formateadas'] = tripletas_formateadas
-        info_prompt['textos_retrieval'] = textos_retrieval
+        info_prompt['tripletas_formateadas'] = "\n".join(tripletas_finales)
         info_prompt['question'] = question
         prompt = build_prompt(prompt_base, info_prompt)
-        
-        
-        #------------ GENERAR RESPUESTA --------------------
         respuesta_llm = llm_funcs.generate(llm_name, prompt, opciones_llm)
         
-        
-        #------------ EVALUAR RESPUESTA --------------------
         ground_truth = dataset_2Wiki[idx]['answer']
         sup_facts = dataset_2Wiki[idx]['supporting_facts']
         
         em = exact_match_score(respuesta_llm, ground_truth)
         f1, precision, recall = f1_score(respuesta_llm, ground_truth)
-        respuesta_en_subgrafo = respuesta_en_nodos_encontrados(nodos, ground_truth)
-        n_sup_facts, n_ent_in_sup_fact = suporting_facts_en_subgrafo(nodos, sup_facts)
+        # respuesta_en_subgrafo = respuesta_en_nodos_encontrados(entidades_finales, ground_truth)
+        n_sup_facts, n_ent_in_sup_fact = suporting_facts_en_subgrafo(entidades_finales, sup_facts, 1)
 
         resultados[id_reg] = {
             'question': question,
             'ground_truth': ground_truth,
             'respuesta_llm': respuesta_llm,
-            'entidades_encontradas': entidades_encontradas,
-            'nodos_subgrafo': nodos,
-            'tripletas_formateadas': [tripletas_formateadas.split("\n")],
-            'textos_recuperados_RAG': lista_nodos_RAG,
+            # 'entidades_encontradas': entidades_encontradas,
+            # 'nodos_subgrafo': nodos,
+            'entidades_encontradas': entidades_finales,
+            'tripletas_formateadas': tripletas_finales,
             'em': em,
             'precision': precision,
             'recall': recall,
             'f1': f1,
-            'respuesta_en_subgrafo': respuesta_en_subgrafo,
+            # 'respuesta_en_subgrafo': respuesta_en_subgrafo,
             'Nº supporting_facts en el subgrafo': n_ent_in_sup_fact,
             '% entidades subgrafo en supporting_facts': n_ent_in_sup_fact / n_sup_facts,
         }
@@ -127,17 +132,13 @@ def contestar_2Wiki_con_hibrido(n_registros, database_Neo, vector_index_name, em
 prompt_base = """
         You are a question answering system.
 
-        You MUST answer the question using ONLY the data provided below.
-        Data providing come from 2 sources: kwnoledge graph and texts.
+        You MUST answer the question using ONLY the data of the knowledge graph provided below.
         Do NOT use any external knowledge.
         If you don't know the answer MUST say only: "I don't know".
         Don't explain your answer.
 
         Knowledge graph:
         {tripletas_formateadas}
-
-        Texts:
-        {textos_retrieval}
 
         Question:
         {question}
@@ -148,16 +149,13 @@ prompt_base = """
 
 def main():
     comentarios = """
-        PRUEBA HIBRIDO
+        PRUEBA
     """
     
-    n_registros = 100
+    n_registros = 10
     database_Neo = "2wiki.prueba1"
     vector_index_name = "entity_embedding_index"
-    collection = "2wikimultihop_prueba1"
     embed_model_st = SentenceTransformer("BAAI/bge-small-en-v1.5")
-    embed_model_llama = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5",)
-
     llm_name = "phi3:latest"
     opciones_llm = {
         'temperature': 0,
@@ -165,10 +163,11 @@ def main():
         # 'num_predict': 600,
     }
 
-    resultados = contestar_2Wiki_con_hibrido(n_registros, database_Neo, vector_index_name, embed_model_st, collection, embed_model_llama, llm_name, prompt_base, opciones_llm)
+
+    resultados = contestar_2Wiki_con_grafo(n_registros, database_Neo, vector_index_name, embed_model_st, llm_name, prompt_base, opciones_llm)
     
     ruta_resultados = root_dir / "outputs" / "resultados" / "dataset_2Wiki"
-    nombre_result = "Hybrid-Graph-RAG_answer_2Wiki"
+    nombre_result = "graph_answer_2Wiki"
     resultados_json = guardar_resultados(resultados, nombre_result, ruta_resultados)
     
     metricas_agg = metricas_totales(resultados)
