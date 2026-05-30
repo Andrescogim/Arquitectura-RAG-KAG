@@ -24,17 +24,26 @@ def tripletas_from_evidences_2Wiki_to_neo4j(con_Neo, data_2wiki):
     return sumary
 
 
-n_registros = 200
+n_registros = 300
 dataset_2Wiki = load_filter_dataset_HuggingFace("xanhho/2wikimultihopqa", n_registros, "train")
-database_Neo = "2wiki.prueba1"
-database_Neo4j = ConexionNeo4j(database_Neo)
-sumary = tripletas_from_evidences_2Wiki_to_neo4j(database_Neo4j, dataset_2Wiki)
 
-entidades = ConexionNeo4j.extraer_entidades_neo4j()
+database_Neo = "2wiki.prueba2"
+conn_Neo4j = ConexionNeo4j(database_Neo)
+
+# conn_Neo4j.crear_database()
+conn_Neo4j.crear_reemplazar_database()
+
+sumary = tripletas_from_evidences_2Wiki_to_neo4j(conn_Neo4j, dataset_2Wiki)
+
+entidades = conn_Neo4j.extraer_all_entidades_neo4j()
 
 embed_model_st = SentenceTransformer("BAAI/bge-small-en-v1.5")
-sumary = ConexionNeo4j.añadir_embeddings_como_propiedad_neo4j(entidades, embed_model_st)
+sumary = conn_Neo4j.añadir_embeddings_como_propiedad_neo4j(entidades, embed_model_st)
 vector_index_name = "entity_embedding_index"
-sumary = ConexionNeo4j.crear_vector_index_neo4j(vector_index_name)
+vec_dim_index = 384
+similarity_func_index = 'cosine'
+sumary = conn_Neo4j.crear_vector_index_neo4j(vector_index_name, vec_dim_index, similarity_func_index)
+text_index_name = "entidadesIndex"
+sumary = conn_Neo4j.crear_fulltext_index(text_index_name)
 
 

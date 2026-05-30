@@ -1,0 +1,19 @@
+Construccion grafo:
+	- Probado y corregidos errores menores.
+	- Introduccion de creacion de database
+
+Construccion RAG:
+
+
+Graph retrieval:
+	- Nueva version: graph_retrieval_test_2Wiki_2()
+	- main grph extractor mas modular.
+	- Correccion de fallos:
+		- Corregida salida de subgrafo: Relaciones ahora vienen ordenadas por la entidad de la que salen.
+		- 0 tripletas o demasiadas en la salida (entrada al LLM) -> Filtrado cuando hay demasiadas y coger  las 2 con mas score si no llega ninguna.
+		- Omision de entidades por ner. Primera letra a minuscula y no eliminar primera entidad extraida.
+
+RAG:
+
+
+HIBRIDO:

@@ -5,8 +5,47 @@ class ConexionNeo4j:
         self.driver = GraphDatabase.driver(
             "bolt://localhost:7687",
             auth=("neo4j", "password"),
-            database = database
         )
+        self.database = database
+
+
+    def crear_database(self):
+        query = f"""
+            CREATE DATABASE $db IF NOT EXISTS WAIT
+        """
+        # WAIT para que espere hasta que este creada la db
+        summary = self.driver.execute_query(
+            query,
+            db = self.database,
+            database_ = "system"
+        )
+
+
+    def crear_reemplazar_database(self):
+        query = f"""
+            CREATE OR REPLACE DATABASE $db WAIT
+        """
+        # WAIT para que espere hasta que este creada la db
+        summary = self.driver.execute_query(
+            query,
+            db = self.database,
+            database_ = "system"
+        )
+
+
+    def extraer_all_entidades_neo4j(self):
+        query = """
+            MATCH (n:Entity)
+            RETURN n.name AS name
+        """
+        entidades = self.driver.execute_query(
+            query,
+            database_ = self.database
+            )
+        entidades_name = []
+        for entidad in entidades[0]:
+            entidades_name.append(entidad['name'])
+        return entidades_name
 
 
     def insertar_tripleta(self, subj, obj, rel):
@@ -23,13 +62,16 @@ class ConexionNeo4j:
             subj = subj,
             obj = obj,
             rel = rel,
-            # database_ = database
+            database_ = self.database
         )
         return summary
 
 
     def ejecutar_query(self, query):
-        records, summary, keys = self.driver.execute_query(query)
+        records, summary, keys = self.driver.execute_query(
+            query,
+            database_ = self.database
+            )
         return records, summary, keys
 
 
@@ -64,6 +106,7 @@ class ConexionNeo4j:
             vector_index_name = vector_index_name,
             n_resultados = n_resultados,
             embedding = query_embedding,
+            database_ = self.database,
         )
         return result[0]
     
@@ -76,7 +119,11 @@ class ConexionNeo4j:
             WHERE n.name IN $entis
             RETURN n.name
         """
-        records, summary, keys = self.driver.execute_query(query, entis = entidades)
+        records, summary, keys = self.driver.execute_query(
+            query,
+            entis = entidades,
+            database_ = self.database
+            )
         entis_exactas = [record["n.name"] for record in records]
         return entis_exactas
 
@@ -92,7 +139,12 @@ class ConexionNeo4j:
                 YIELD node, score
                 RETURN node.name, score
             """
-            records, summary, keys = self.driver.execute_query(query, index_name = index_name, entidad = ent)
+            records, summary, keys = self.driver.execute_query(
+                query,
+                index_name = index_name,
+                entidad = ent,
+                database_ = self.database
+                )
             resultado = [{"name": record['node.name'], "score": record['score']} for record in records]
             res_busqueda_parcial[ent] = resultado
         return res_busqueda_parcial
@@ -112,7 +164,12 @@ class ConexionNeo4j:
                 YIELD node, score
                 RETURN node.name, score
             """
-            records, summary, keys = self.driver.execute_query(query, index_name = index_name, entidad = ent_fuzzy)
+            records, summary, keys = self.driver.execute_query(
+                query,
+                index_name = index_name,
+                entidad = ent_fuzzy,
+                database_ = self.database
+                )
             # res_busqueda_fuzzy[ent] = records
             resultado = [{"name": record['node.name'], "score": record['score']} for record in records]
             res_busqueda_fuzzy[ent] = resultado
@@ -144,7 +201,11 @@ class ConexionNeo4j:
             }
             ] AS relationships
         """
-        subgrafo_raw = self.driver.execute_query(query_base, entidades = entidades, k = n_saltos)
+        subgrafo_raw = self.driver.execute_query(
+            query_base,
+            entidades = entidades,
+            k = n_saltos,
+            database_ = self.database)
         subgrafo_clean = [record for record in subgrafo_raw]
         # nodes = subgrafo_clean[0][0]['nodes']
         # rels = subgrafo_clean[0][0]['relationships']
@@ -157,7 +218,7 @@ class ConexionNeo4j:
         return nodes, rels
 
 
-    def extraer_subgrafo_completo(self, entidades, n_saltos):
+    def extraer_subgrafo_completo_old(self, entidades, n_saltos):
         """
         Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
         TODOS los saltos - caminos completos DESDE entidad origen
@@ -172,7 +233,11 @@ class ConexionNeo4j:
                 [rel IN relationships(path) | type(rel)] AS relaciones_types
             """
 
-        subgrafo_raw, summary, key = self.driver.execute_query(query_base, entis = entidades)
+        subgrafo_raw, summary, key = self.driver.execute_query(
+            query_base,
+            entis = entidades,
+            database_ = self.database
+            )
         lista_relaciones = []
         for rec in subgrafo_raw:
             relacion = [rec["entidad_inicial"]]
@@ -183,7 +248,49 @@ class ConexionNeo4j:
 
         return lista_relaciones
 
+    def extraer_subgrafo_completo(self, entidades, n_saltos):
+        """
+        Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
+        TODOS los saltos - caminos completos DESDE entidad origen
+        """
+        # driver_aux = GraphDatabase.driver(
+        #     "bolt://localhost:7687",
+        #     auth=("neo4j", "password"),
+        #     database = database_Neo
+        # )
+        query_base = f"""
+            MATCH path = (n:Entity)-[*1..{n_saltos}]-(m)
+            WHERE n.name IN $entis
+            RETURN
+                elementId(n) AS ID,
+                n.name AS entidad_inicial,
+                [node IN nodes(path) | node.name] AS nodos_names,
+                [rel IN relationships(path) | type(rel)] AS relaciones_types
+            """
 
+        subgrafo_raw, summary, key = self.driver.execute_query(
+            query_base,
+            entis = entidades,
+            database_ = self.database
+            )
+        """return subgrafo_raw
+        lista_relaciones = []
+        for rec in subgrafo_raw:
+            relacion = [rec["entidad_inicial"]]
+            for rel, node in zip(rec["relaciones_types"], rec["nodos_names"][1:]):
+                relacion.append(rel)
+                relacion.append(node)
+            lista_relaciones.append(relacion)
+
+        return lista_relaciones"""
+        tripletas_extendidas = {}
+        for rec in subgrafo_raw:
+            relacion = [rec["entidad_inicial"]]
+            for rel, node in zip(rec["relaciones_types"], rec["nodos_names"][1:]):
+                relacion.append(rel)
+                relacion.append(node)
+            tripletas_extendidas.setdefault(rec['entidad_inicial'], []).append(relacion)
+        return tripletas_extendidas
 
 
     def añadir_embeddings_como_propiedad_neo4j(self, entidades, embed_model):
@@ -196,7 +303,11 @@ class ConexionNeo4j:
             MATCH(n:Entity {name: row.name})
             SET n.embedding = row.embedding
         """
-        sumary = self.driver.execute_query(query_embeddings, data = entis_embeddings_list)
+        sumary = self.driver.execute_query(
+            query_embeddings,
+            data = entis_embeddings_list,
+            database_ = self.database
+            )
         return sumary
     
     
@@ -217,7 +328,9 @@ class ConexionNeo4j:
             query_crear_embeddings,
             vector_index_name = vector_index_name,
             n_vector = n_vector,
-            similarity_function = similarity_function)
+            similarity_function = similarity_function,
+            database_ = self.database
+            )
         return sumary
     
 
@@ -227,5 +340,9 @@ class ConexionNeo4j:
         query = """
             CREATE FULLTEXT INDEX $index_name FOR (n:Entity) ON EACH [n.name]
         """
-        summary = self.driver.execute_query(query, index_name = index_name)
+        summary = self.driver.execute_query(
+            query,
+            index_name = index_name,
+            database_ = self.database
+            )
         return summary
