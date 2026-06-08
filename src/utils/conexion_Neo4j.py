@@ -46,6 +46,22 @@ class ConexionNeo4j:
         for entidad in entidades[0]:
             entidades_name.append(entidad['name'])
         return entidades_name
+    
+    
+    
+    def extraer_all_relaciones_neo4j(self):
+        query = """
+            MATCH ()-[r]->()
+            RETURN COLLECT(DISTINCT type(r)) AS relationshipTypes
+        """
+        relaciones = self.driver.execute_query(
+            query,
+            database_ = self.database
+            )
+        # relaciones_types = []
+        # for relacion in relaciones[0]:
+        #     relaciones_types.append(relacion['name'])
+        return relaciones
 
 
     def insertar_tripleta(self, subj, obj, rel):
@@ -218,7 +234,7 @@ class ConexionNeo4j:
         return nodes, rels
 
 
-    def extraer_subgrafo_completo_old(self, entidades, n_saltos):
+    def extraer_subgrafo_completo_1(self, entidades, n_saltos):
         """
         Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
         TODOS los saltos - caminos completos DESDE entidad origen
@@ -248,7 +264,7 @@ class ConexionNeo4j:
 
         return lista_relaciones
 
-    def extraer_subgrafo_completo(self, entidades, n_saltos):
+    def extraer_subgrafo_completo_2(self, entidades, n_saltos):
         """
         Extrae todas las relaciones de las entidades hasta vecinos de 2 saltos
         TODOS los saltos - caminos completos DESDE entidad origen
@@ -273,16 +289,6 @@ class ConexionNeo4j:
             entis = entidades,
             database_ = self.database
             )
-        """return subgrafo_raw
-        lista_relaciones = []
-        for rec in subgrafo_raw:
-            relacion = [rec["entidad_inicial"]]
-            for rel, node in zip(rec["relaciones_types"], rec["nodos_names"][1:]):
-                relacion.append(rel)
-                relacion.append(node)
-            lista_relaciones.append(relacion)
-
-        return lista_relaciones"""
         tripletas_extendidas = {}
         for rec in subgrafo_raw:
             relacion = [rec["entidad_inicial"]]
@@ -291,6 +297,34 @@ class ConexionNeo4j:
                 relacion.append(node)
             tripletas_extendidas.setdefault(rec['entidad_inicial'], []).append(relacion)
         return tripletas_extendidas
+
+
+    def extraer_subgrafo_completo(self, entidades, n_saltos):
+        query_subgrafo = f"""
+            MATCH path = (n:Entity)-[*1..{n_saltos}]-(m)
+            WHERE n.name IN $entis
+            RETURN
+                elementId(n) AS ID,
+                n.name AS entidad_inicial,
+                [node IN nodes(path) | node.name] AS nodos_names,
+                [node IN nodes(path) | COUNT{{(node)--()}}] AS degrees,
+                [rel IN relationships(path) | type(rel)] AS relaciones_types,
+                [i IN range(0, size(relationships(path)) - 1) |
+                CASE 
+                    WHEN startNode(relationships(path)[i]) = nodes(path)[i]
+                    THEN "OUT"
+                    ELSE "IN"
+                END
+                ] AS relaciones_direccion
+            """
+        subgrafo_raw, summary, keys = self.driver.execute_query(
+            query_subgrafo,
+            entis = entidades,
+            k = 2,
+            database_ = self.database
+            )
+        return subgrafo_raw
+
 
 
     def añadir_embeddings_como_propiedad_neo4j(self, entidades, embed_model):
@@ -346,3 +380,71 @@ class ConexionNeo4j:
             database_ = self.database
             )
         return summary
+
+
+    def insertar_triplets_batch(self, tripletas):
+        
+        """
+        Inserta tripletas en Neo4j en batch.
+        input: tripletas -> lista de tuplas (subj, rel, obj)
+
+        """
+        
+        query_base = """
+            UNWIND $tripletas as tripleta
+            MERGE (a:Entity {name: tripleta[0]})
+            MERGE (b:Entity {name: tripleta[2]})
+            WITH a, b, tripleta
+            CALL apoc.create.relationship(a, tripleta[1], {}, b)
+            YIELD rel
+            RETURN rel;
+        """
+        summary = self.driver.execute_query(
+            query_base,
+            tripletas = tripletas,
+            database_ = self.database
+        )
+        return summary
+
+
+def obtener_grados_nodos(self, df):
+    
+    entidades = df['Entidad'].tolist()
+    similares = df['similar'].tolist()
+    set_entidades = list(set(entidades + similares)) 
+    
+    query = """
+        UNWIND $entidades as entidad
+        MATCH (n:Entity {name: entidad})
+        RETURN n.name AS name, COUNT{(n)--()} AS n_relaciones
+    """
+    records, summary, key = self.driver.execute_query(query, entidades = set_entidades, database_ = self.database)
+    grados = {rec['name']: rec['n_relaciones'] for rec in records}
+    return grados
+
+
+
+def fusionar_nodos(self, nodos_fusion):
+    query_fusion = """
+        UNWIND $grupos AS grupo
+        
+        MATCH (principal:Entity {name: grupo.nodo_principal})
+
+        MATCH (secundarios:Entity)
+        WHERE secundarios.name IN grupo.nodos_a_fusionar 
+
+        WITH principal, collect(secundarios) AS nodos_secundarios, grupo.nodos_a_fusionar AS names_fusionados
+
+        CALL apoc.refactor.mergeNodes([principal] + nodos_secundarios, {
+        properties: {
+            name: "discard",
+            `\\*`: "combine"
+        },
+        mergeRels: true
+        }) YIELD node
+
+        SET node.fusionados = names_fusionados
+        RETURN count(node) AS fusiones_realizadas
+    """
+    records, summary, key = self.driver.execute_query(query_fusion, grupos = nodos_fusion, database_ = self.database)
+    return records[0]["fusiones_realizadas"]

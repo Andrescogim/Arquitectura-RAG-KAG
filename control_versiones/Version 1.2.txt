@@ -1,0 +1,22 @@
+Construccion grafo:
+	- Añadido limipieza de entidades y tripletas.
+	- Añadido pequeña limpieza del texto antes de extraccion de tripletas.
+	- Añadido extraccion de tripletas de nacionalidad
+	- Funciones de construccion ahora en src/utils/funciones_construir_grafo
+	- Implementacion de dedeuplicacion de entidades: score rank25, calculo de distancias, agrupamiento similares, filtrado por grado del nodo y fusion.
+	- Limpieza archivo principal- nuevo main().
+
+Construccion RAG:
+
+
+Graph retrieval:
+	- NUEVA VERSION graph_retrieval_test_2wiki_3()
+	- Añadido reranking de solo relaciones y escalado.
+	- Score final ahora ponderacion de rereanking tripletas + reranking relaciones
+	- Funciones de tripletas a pandas. Desde la extraccion del subgrafo se lleva a df y se trabaja sobre el.
+	- main mas limpio. Funciones de logica (buscar_entidades, extraer y puntuar_tripletas, generar_respuesta y procesado 2wiki) ahora en src/logica/graph_retrieval
+
+RAG:
+
+
+HIBRIDO:

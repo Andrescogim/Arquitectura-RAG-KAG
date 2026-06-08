@@ -61,7 +61,8 @@ def extraer_entidades_ner(text, ner_model):
     ner_custom.add_patterns(patterns)
     
     entidades_extraidas = ner(text)
-    entidades_ner = [ent.text for ent in entidades_extraidas.ents]
+    # entidades_ner = [ent.text for ent in entidades_extraidas.ents]
+    entidades_ner = [(ent.text).lower() for ent in entidades_extraidas.ents]
 
     
     return list(set(entidades_ner))
