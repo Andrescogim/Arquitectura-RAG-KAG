@@ -2,7 +2,7 @@
 /NB/data/
 /outputs/
 __pycache__/
-
+.env
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

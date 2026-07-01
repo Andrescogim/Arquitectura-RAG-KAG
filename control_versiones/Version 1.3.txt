@@ -1,0 +1,17 @@
+VERSION FINAL
+
+Construccion grafo:
+	- Mejorada extraccion de tripletas de nacionalidad. Ahora si hay parentesis se lo salta y mira 4 palabras despues.
+	- Añadido guardado de tripletas generadas
+	- Añadido guardado de deduplicaciones (df y lista final para Neo4j)
+
+Construccion RAG:
+
+
+Graph retrieval:
+
+
+RAG:
+
+
+HIBRIDO:

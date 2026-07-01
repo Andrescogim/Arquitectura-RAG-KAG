@@ -90,7 +90,7 @@ def extraer_tripletas_rebel(text, tokenizer, model):
 
 # TRIPLETAS NACIONALIDAD
 
-def extraer_nacionalidades(text, nlp, n_window):
+def extraer_nacionalidades_old(text, nlp, n_window):
 
     doc = nlp(text)
     # N_tokens = 3
@@ -110,6 +110,42 @@ def extraer_nacionalidades(text, nlp, n_window):
     return triplets_nacionalidad, window_ctxt
 
 
+def extraer_nacionalidades(text, nlp, n_window):
+    """
+    Ahora se mira si hay parentesis desdepues de la entidad persona.
+    Si hay "(" se corre la ventana hasta final de parentesis
+    """
+    
+    text = text.replace("(", " (").replace("  ", " ")
+    doc = nlp(text)
+    triplets_nacionalidad = []
+    window_ctxt = []
+    nationality = [ent.text for ent in doc.ents if ent.label_=="NORP"]
+    for ent in doc.ents:
+        if ent.label_ == "PERSON" or ent.label_ == "ORG":
+            window_in = ent.end
+            if ent.end < len(doc):
+                if doc[ent.end].text == "(":
+                    idx_open = ent.end
+                    for i in range(idx_open, len(doc)):
+                        if doc[i].text == ")":
+                            idx_cierre = i
+                            break
+                    window_in = idx_cierre + 1
+            window_fin = min(window_in + n_window, len(doc))
+            for token in doc[window_in:window_fin]:
+                if token.text in nationality:
+                    triplets_nacionalidad.append((ent.text, "originally from", token.text))
+                    # triplets_nacionalidad.append((ent.text, "country of origin", token.lemma_))
+                    window_ctxt.append(f"{ent.text} {doc[window_in:window_fin]}")
+                    break
+    return triplets_nacionalidad, window_ctxt
+
+
+
+
+
+
 def extraccion_tripletas_2wiki_rebel(dataset_2Wiki, tokenizer, model, nlp, n_window):
     tripletas_all = []
     all_triples_nacionalidad = []
@@ -125,12 +161,21 @@ def extraccion_tripletas_2wiki_rebel(dataset_2Wiki, tokenizer, model, nlp, n_win
     return tripletas_all, all_triples_nacionalidad
 
 
-def tripletas_from_evidences_2Wiki_to_neo4j(con_Neo, data_2wiki):
+def tripletas_from_evidences_2Wiki(data_2wiki):
+    tripletas = []
     for el in data_2wiki:
-        for tripleta in eval(el["evidences"]):
+        # for tripleta in eval(el["evidences"]):
+        for tripleta in json.loads(el["evidences"]):
             subj = tripleta[0]
             obj = tripleta[2]
             rel = tripleta[1].replace(" ", "_")
             # sumary = insert_triplet(driver, "2wiki.prueba1", subj, obj, rel)
-            sumary = con_Neo.insertar_tripleta(subj, obj, rel)
-    return sumary
+            # sumary = con_Neo.insertar_tripleta(subj, obj, rel)
+            tripletas.append((subj, rel, obj))
+    return tripletas
+
+
+
+def obtencion_entidades_de_tripletas(tripletas):
+    entidades = [entis for tripleta in tripletas for entis in (tripleta[0], tripleta[2])]
+    return list(set(entidades))

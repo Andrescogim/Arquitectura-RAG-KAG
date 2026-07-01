@@ -31,7 +31,7 @@ def extraer_entidades_ner_old(text, ner_model):
     return list(set(entidades_ner))
 
 
-def extraer_entidades_ner(text, ner_model):
+def extraer_entidades_ner(text, ner):
     """
     Extraccion de entidades con spacy.
     Se añade regla para que trate las palabras que comienzan en mayuscula como entidades.
@@ -39,7 +39,7 @@ def extraer_entidades_ner(text, ner_model):
     """
 
     text = text[0].lower() + text[1:]
-    ner = spacy.load(ner_model)
+    # ner = spacy.load(ner_model)
     if "entity_ruler" in ner.pipe_names:
         ner.remove_pipe("entity_ruler")
     ner_custom = ner.add_pipe("entity_ruler", before="ner")

@@ -14,14 +14,49 @@ from src.utils.conexion_Neo4j import ConexionNeo4j
 from src.utils.funciones_construir_grafo import(
     limpiar_tripletas,
     extraccion_tripletas_2wiki_rebel,
-    # tripletas_from_evidences_2Wiki_to_neo4j
+    tripletas_from_evidences_2Wiki
 )
+# from src.utils.funciones_guardado import guardar_tripletas
+from src.utils.funciones_guardado import guardar_resultados
+
+
+
+def tripletas_from_evidencias(con_Neo4j, dataset_2Wiki):
+    tripletas = tripletas_from_evidences_2Wiki(dataset_2Wiki)
+    tripletas_limpias = list(set(limpiar_tripletas(tripletas)))
+    summary = con_Neo4j.insertar_triplets_batch(tripletas_limpias)
+
+
+def tripletas_from_rebel(con_Neo4j, dataset_2Wiki, tokenizer, model, nlp, n_window, database_Neo, registros_subset):
+    tripletas_all, all_triples_nacionalidad = extraccion_tripletas_2wiki_rebel(dataset_2Wiki, tokenizer, model, nlp, n_window)
+    
+    # ----------------- INSERCION DE TRIPLETAS EN NEO4J -----------------
+    tripletas_limpias = list(set(limpiar_tripletas(tripletas_all)))
+    tripletas_limpias_nac = list(set(limpiar_tripletas(all_triples_nacionalidad)))
+    summary = con_Neo4j.insertar_triplets_batch(tripletas_limpias)
+    summary = con_Neo4j.insertar_triplets_batch(tripletas_limpias_nac)
+    print("EXTRACCION Y CARGA DE TRIPLETAS OK")
+
+    # ----------------- GUARDADO TRIPLETAS EN LOCAL -----------------
+    ruta_tripletas = root_dir / "outputs" / "tripletas_generadas" / "dataset_2Wiki"
+
+    nombre_result = f"tripletas_Rebel_2Wiki_DB_{database_Neo}_registros_{registros_subset}"
+    nombre_result_nac = f"tripletas_Nacionalidad_2Wiki_DB_{database_Neo}_registros_{registros_subset}"
+    _ = guardar_resultados(tripletas_limpias, nombre_result, ruta_tripletas)
+    _ = guardar_resultados(tripletas_limpias_nac, nombre_result_nac, ruta_tripletas)
 
 
 def main():
-    n_registros = 2
-    database_Neo = "2wiki.prueba.rebel.5"
+    
     reemplazar_database_neo = True
+    extractor_tripletas = "evidences"
+    # extractor_tripletas = "rebel"
+    
+    n_registros = 500
+    registros_subset = f"0-{n_registros}"
+    
+    database_Neo = "2wiki.rebel.gold.500"
+    # database_Neo = "2wiki.rebel.500"
     tokenizer = AutoTokenizer.from_pretrained("Babelscape/rebel-large")
     model = AutoModelForSeq2SeqLM.from_pretrained("Babelscape/rebel-large").to("cuda")
     n_window = 4 # Ventana busqueda tripletas nacionalidad
@@ -58,36 +93,28 @@ def main():
     print("OBTENCION DATASET OK")
     
     # ------------------ CONEXION NEO4J ----------------------
-    conn_Neo4j = ConexionNeo4j(database_Neo)
+    con_Neo4j = ConexionNeo4j(database_Neo)
     
     # ----------------- CREAR LA DATABASE -------------------
     if reemplazar_database_neo == True:
-        conn_Neo4j.crear_reemplazar_database()
+        con_Neo4j.crear_reemplazar_database()
     else:
-        conn_Neo4j.crear_database()
+        con_Neo4j.crear_database()
     print("CREACION DATABASE EN Neo4j OK")
 
     # ----------------- EXTRACCION DE TRIPLETAS -----------------
     print("COMENZANDO EXTRACCION Y CARGA DE TRIPLETAS...")
-    # TRIPLETAS DIRECTAMENTE DE LAS EVIDENCIAS
-    # sumary = tripletas_from_evidences_2Wiki_to_neo4j(conn_Neo4j, dataset_2Wiki)
-
-    # TRIPLETAS EXTRAIDAS CON REBEL
-    tripletas_all, all_triples_nacionalidad = extraccion_tripletas_2wiki_rebel(dataset_2Wiki, tokenizer, model, nlp, n_window)
-    
-    # ----------------- INSERCION DE TRIPLETAS EN NEO4J -----------------
-    tripletas_limpias = list(set(limpiar_tripletas(tripletas_all)))
-    tripletas_limpias_nac = list(set(limpiar_tripletas(all_triples_nacionalidad)))
-    summary = conn_Neo4j.insertar_triplets_batch(tripletas_limpias)
-    summary = conn_Neo4j.insertar_triplets_batch(tripletas_limpias_nac)
-    print("EXTRACCION Y CARGA DE TRIPLETAS OK")
+    if extractor_tripletas == "evidences":
+        tripletas_from_evidencias(con_Neo4j, dataset_2Wiki)
+    elif extractor_tripletas == "rebel":
+        tripletas_from_rebel(con_Neo4j, dataset_2Wiki, tokenizer, model, nlp, n_window, database_Neo, registros_subset)
 
     # ----------------- CREACION DE EMBEDDINGS Y TEXT INDEX -----------------
     print("COMENZANDO CREACION DE EMBEDDINGS Y TEXT INDEX EN Neo4j")
-    entidades = conn_Neo4j.extraer_all_entidades_neo4j()
-    sumary = conn_Neo4j.añadir_embeddings_como_propiedad_neo4j(entidades, embed_model_st)
-    sumary = conn_Neo4j.crear_vector_index_neo4j(vector_index_name, vec_dim_index, similarity_func_index)
-    sumary = conn_Neo4j.crear_fulltext_index(text_index_name)
+    entidades = con_Neo4j.extraer_all_entidades_neo4j()
+    sumary = con_Neo4j.añadir_embeddings_como_propiedad_neo4j(entidades, embed_model_st)
+    sumary = con_Neo4j.crear_vector_index_neo4j(vector_index_name, vec_dim_index, similarity_func_index)
+    sumary = con_Neo4j.crear_fulltext_index(text_index_name)
     print("CREACION DE EMBEDDINGS Y TEXT INDEX EN Neo4j OK ")
 
 

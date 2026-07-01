@@ -372,7 +372,8 @@ class ConexionNeo4j:
     def crear_fulltext_index(self, index_name):
         
         query = """
-            CREATE FULLTEXT INDEX $index_name FOR (n:Entity) ON EACH [n.name]
+            CREATE FULLTEXT INDEX $index_name 
+            FOR (n:Entity) ON EACH [n.name]
         """
         summary = self.driver.execute_query(
             query,
@@ -389,13 +390,13 @@ class ConexionNeo4j:
         input: tripletas -> lista de tuplas (subj, rel, obj)
 
         """
-        
+        # CALL apoc.create.relationship(a, tripleta[1], {}, b)
         query_base = """
             UNWIND $tripletas as tripleta
             MERGE (a:Entity {name: tripleta[0]})
             MERGE (b:Entity {name: tripleta[2]})
             WITH a, b, tripleta
-            CALL apoc.create.relationship(a, tripleta[1], {}, b)
+            CALL apoc.merge.relationship(a, tripleta[1], {}, {}, b)
             YIELD rel
             RETURN rel;
         """
@@ -407,44 +408,44 @@ class ConexionNeo4j:
         return summary
 
 
-def obtener_grados_nodos(self, df):
-    
-    entidades = df['Entidad'].tolist()
-    similares = df['similar'].tolist()
-    set_entidades = list(set(entidades + similares)) 
-    
-    query = """
-        UNWIND $entidades as entidad
-        MATCH (n:Entity {name: entidad})
-        RETURN n.name AS name, COUNT{(n)--()} AS n_relaciones
-    """
-    records, summary, key = self.driver.execute_query(query, entidades = set_entidades, database_ = self.database)
-    grados = {rec['name']: rec['n_relaciones'] for rec in records}
-    return grados
-
-
-
-def fusionar_nodos(self, nodos_fusion):
-    query_fusion = """
-        UNWIND $grupos AS grupo
+    def obtener_grados_nodos(self, df):
         
-        MATCH (principal:Entity {name: grupo.nodo_principal})
+        entidades = df['Entidad'].tolist()
+        similares = df['similar'].tolist()
+        set_entidades = list(set(entidades + similares)) 
+        
+        query = """
+            UNWIND $entidades as entidad
+            MATCH (n:Entity {name: entidad})
+            RETURN n.name AS name, COUNT{(n)--()} AS n_relaciones
+        """
+        records, summary, key = self.driver.execute_query(query, entidades = set_entidades, database_ = self.database)
+        grados = {rec['name']: rec['n_relaciones'] for rec in records}
+        return grados
 
-        MATCH (secundarios:Entity)
-        WHERE secundarios.name IN grupo.nodos_a_fusionar 
 
-        WITH principal, collect(secundarios) AS nodos_secundarios, grupo.nodos_a_fusionar AS names_fusionados
 
-        CALL apoc.refactor.mergeNodes([principal] + nodos_secundarios, {
-        properties: {
-            name: "discard",
-            `\\*`: "combine"
-        },
-        mergeRels: true
-        }) YIELD node
+    def fusionar_nodos(self, nodos_fusion):
+        query_fusion = """
+            UNWIND $grupos AS grupo
+            
+            MATCH (principal:Entity {name: grupo.nodo_principal})
 
-        SET node.fusionados = names_fusionados
-        RETURN count(node) AS fusiones_realizadas
-    """
-    records, summary, key = self.driver.execute_query(query_fusion, grupos = nodos_fusion, database_ = self.database)
-    return records[0]["fusiones_realizadas"]
+            MATCH (secundarios:Entity)
+            WHERE secundarios.name IN grupo.nodos_a_fusionar 
+
+            WITH principal, collect(secundarios) AS nodos_secundarios, grupo.nodos_a_fusionar AS names_fusionados
+
+            CALL apoc.refactor.mergeNodes([principal] + nodos_secundarios, {
+            properties: {
+                name: "discard",
+                `\\*`: "combine"
+            },
+            mergeRels: true
+            }) YIELD node
+
+            SET node.fusionados = names_fusionados
+            RETURN count(node) AS fusiones_realizadas
+        """
+        records, summary, key = self.driver.execute_query(query_fusion, grupos = nodos_fusion, database_ = self.database)
+        return records[0]["fusiones_realizadas"]

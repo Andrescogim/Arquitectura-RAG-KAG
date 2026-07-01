@@ -168,6 +168,9 @@ def filtrado_subgrafo(df_subgrafo, n_rel_max):
         - Caminos donde las 2 relaciones son iguales y 1ª OUT y 2ª IN
     """
     # df_subgrafo_filt = df_subgrafo.loc[(df_subgrafo['grado_2'] < n_rel_max) | (df_subgrafo['rel_2'].isna())]
+    # df_subgrafo_filt = df_subgrafo.drop_duplicates(["nodo_1", "nodo_2", "nodo_3"])
+    # df_subgrafo_filt = df_subgrafo.drop_duplicates()
+    # df_subgrafo_filt = df_subgrafo_filt.loc[(df_subgrafo_filt['grado_2'] < n_rel_max) | (df_subgrafo_filt['rel_2'] == "")]
     df_subgrafo_filt = df_subgrafo.loc[(df_subgrafo['grado_2'] < n_rel_max) | (df_subgrafo['rel_2'] == "")]
     df_subgrafo_filt = df_subgrafo_filt.loc[~((df_subgrafo_filt['rel_1'] == df_subgrafo_filt['rel_2']) & (df_subgrafo_filt['direccion_1'] =='OUT') & (df_subgrafo_filt['direccion_2'] =='IN'))].reset_index(drop=True)
     return df_subgrafo_filt
@@ -207,7 +210,7 @@ def reranking_relaciones_pandas(question, df_subgrafo, reranker):
     for i, rel in enumerate(rels_1):
         rel_to_rerank = rel.replace("_", " ")
         if rels_2[i] != "":
-            rel_to_rerank += f" -> {rels_2[i].replace('_', ' ')}"
+            rel_to_rerank += f" , {rels_2[i].replace('_', ' ')}"
         rels_to_rerank.append(rel_to_rerank)
     pairs = [[question, relacion] for relacion in rels_to_rerank ]
     scores_rerank = reranker.predict(pairs)
@@ -216,15 +219,24 @@ def reranking_relaciones_pandas(question, df_subgrafo, reranker):
 
 
 def escalado_rerank_rels(df_subgrafo):
-    # Con rank poner valores entre 0 y 1 pero distribuidos normalmente para ue no salgan valores muy pequeños
+    """# Con rank poner valores entre 0 y 1 pero distribuidos normalmente para ue no salgan valores muy pequeños
     min_rank = df_subgrafo["rerank_score_rels"].rank().min()
     max_rank = df_subgrafo["rerank_score_rels"].rank().max()
-    df_subgrafo["rerank_score_rels_escalado"] = (df_subgrafo["rerank_score_rels"].rank() - min_rank) / (max_rank - min_rank)
+    df_subgrafo["rerank_score_rels_escalado"] = (df_subgrafo["rerank_score_rels"].rank() - min_rank) / (max_rank - min_rank)"""
+    # ESCALADO HACIENDO PRIMERO LOG - CONSERVA MEJOR LAS DISANCIAS ENTRE RERANKS
+    df_subgrafo['rerank_score_rels_log'] = np.log(df_subgrafo['rerank_score_rels'])
+    min_log = min(df_subgrafo['rerank_score_rels_log'])
+    max_log = max(df_subgrafo['rerank_score_rels_log'])
+    if min_log == max_log:
+        df_subgrafo['rerank_score_rels_escalado'] = 1
+    else:
+        df_subgrafo['rerank_score_rels_escalado'] = (df_subgrafo['rerank_score_rels_log'] - min_log) / (max_log - min_log)
     return df_subgrafo
 
 
 def ponderacion_score_reranking_rels(df_subgrafo, peso_tripleta, peso_rel):
-    df_subgrafo["score_rerank_ponderado"] = df_subgrafo["rerank_score"] * peso_tripleta + df_subgrafo["rerank_score_rels"] * peso_rel
+    # df_subgrafo["score_rerank_ponderado"] = df_subgrafo["rerank_score"] * peso_tripleta + df_subgrafo["rerank_score_rels"] * peso_rel
+    df_subgrafo["score_rerank_ponderado"] = df_subgrafo["rerank_score"] * peso_tripleta + df_subgrafo["rerank_score_rels_escalado"] * peso_rel
     return df_subgrafo
 
 
@@ -233,5 +245,8 @@ def filtrar_por_reranker_pandas(df_subgrafo, n_maximos, min_score, col_score):
     Filtrar los n_maximos de cada entidad
     """
     df_subgrafo = df_subgrafo[df_subgrafo[col_score] >= min_score]
-    df_maximos = df_subgrafo.groupby('entidad_incial').apply(lambda x: x.nlargest(n_maximos, 'rerank_score'), include_groups=False).reset_index(drop=True)
+    df_subgrafo = df_subgrafo.drop_duplicates(["nodo_1", "nodo_2", "nodo_3"])
+    # df_maximos = df_subgrafo.groupby('entidad_incial').apply(lambda x: x.nlargest(n_maximos, 'rerank_score'), include_groups=False)
+    df_maximos = df_subgrafo.groupby("entidad_incial").apply(lambda x: x.nlargest(n_maximos, col_score), include_groups=False)
+    df_maximos = df_maximos.sort_values(col_score, ascending = False).reset_index(drop=True)
     return df_maximos

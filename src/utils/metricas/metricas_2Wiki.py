@@ -2,6 +2,10 @@
 import re
 import string
 from collections import Counter
+import json
+from groq import Groq
+from pydantic import BaseModel, Field
+
 
 def normalize_answer(s):
 
@@ -68,7 +72,8 @@ def suporting_facts_en_subgrafo(nodos, sup_facts, new = None):
         nodos_lista = [normalize_answer(node) for node in nodos]
     else:
         nodos_lista = [normalize_answer(node['name']) for entidad in nodos for node in nodos[entidad]]
-    sup_facts_lista = [normalize_answer(sf[0]) for sf in eval(sup_facts)]
+    # sup_facts_lista = [normalize_answer(sf[0]) for sf in eval(sup_facts)]
+    sup_facts_lista = [normalize_answer(sf[0]) for sf in sup_facts]
     comunes = Counter(nodos_lista) & Counter(sup_facts_lista)
     return len(sup_facts_lista), len(comunes)
 
@@ -96,3 +101,64 @@ def metricas_totales(resultados):
     metricas_totales["f1"] = f1 / N_resultados
     
     return metricas_totales
+
+
+class EvaluacionRAG(BaseModel):
+    strict_hallucination: int = Field(
+        description="1 if the answer is 100% supported by the triplets OR is an 'I don't know' evasion (never guess). 0 if it claims ANY unsupported fact."
+    )
+    incorrect_evasion: int = Field(
+        description="1 if the model evades with 'I don't know' despite the triplets having the clear answer points. 0 in any other case."
+    )
+    context_recall: int = Field(
+        description="1 if the retrieved triplets contain the necessary information to successfully answer the question. 0 if information is missing."
+    )
+    context_relevance: int = Field(
+        description="Number of the retrieved triplets that are highly specific to the question."
+    )
+    explanation: str = Field(
+        description="A concise single-sentence summary justifying the scores assigned."
+    )
+    
+    
+def metricas_semanticas_groq(client_groq, modelo, pregunta, respuesta, tripletas):
+    prompt_sistema = f"""
+    You are an expert logic and quality control auditor for Knowledge Graph RAG systems.
+    Your task is to evaluate the provided case and output your verdict strictly adhering to this JSON schema:
+    {json.dumps(EvaluacionRAG.model_json_schema())}
+    
+    CRITICAL INSTRUCTIONS:
+    - Return ONLY the raw JSON object. Do not include markdown blocks (```json) or introductory text.
+    - Evaluate strict_hallucination and incorrect_evasion as mutually exclusive errors regarding 'I don't know' responses.
+    """
+    prompt_usuario = f"""
+    DATA TO AUDIT:
+    - Retrieved Graph Triplets: {tripletas}
+    - User Question: {pregunta}
+    - System Answer: {respuesta}
+    """
+    
+    completion = client_groq.chat.completions.create(
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": prompt_usuario}
+        ],
+        # model="openai/gpt-oss-120b",
+        model = modelo,
+        temperature=0.0, 
+        response_format={"type": "json_object"}
+    )
+    
+    # Parseamos el string JSON directamente a un diccionario de Python
+    # resultado_dict = json.loads(completion.choices.message.content)
+    return json.loads(completion.choices[0].message.content)
+
+
+def fusionar_metricas(output, metricas_groq):
+    for i, key in enumerate(output):
+        output[key]["alucinacion"] = metricas_groq[i]["strict_hallucination"]
+        output[key]["Desconocimiento erroneo"] = metricas_groq[i]["incorrect_evasion"]
+        output[key]["Context recall"] = metricas_groq[i]["context_recall"]
+        output[key]["Context relevance"] = metricas_groq[i]["context_relevance"]
+        output[key]["explicacion"] = metricas_groq[i]["explanation"]
+    return output
